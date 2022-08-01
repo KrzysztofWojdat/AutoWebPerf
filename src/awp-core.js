@@ -22,6 +22,7 @@ const assert = require('./utils/assert');
 const {TestType} = require('./common/types');
 const MultiConnector = require('./connectors/multi-connector');
 const ApiHandler = require('./helpers/api-handler');
+const { watchFile } = require('fs');
 
 /**
  * AutoWebPerf (AWP) main class.
@@ -700,7 +701,9 @@ class AutoWebPerf {
         let gathererNames = this.parseGathererNames(test.gatherer);
         gathererNames = gathererNames.concat(this.parseGathererNames(options.gatherer));          
         [...new Set(gathererNames)].forEach(gathererName =>  {
-          let response = this.runGatherer(test, gathererName, options);
+
+          let response = this.runGathererWithRetries(test, gathererName, options, 3);
+          
           if (response) {
             newResult[gathererName] = response;
             statuses.push(newResult[gathererName].status);
@@ -805,6 +808,37 @@ class AutoWebPerf {
         errors: [error],
       }
     }
+  }
+
+  /**
+   * Wrap a call to runGatherer method with an exponetial backoff logic.
+   * @param {object} test Test object to run. 
+   * @param {object} gathererName 
+   * @param {object} options
+   * @param {object} max_number_of_retries Number of retry attemps.
+   *
+   */
+  runGathererWithRetries(test, gathererName, options, max_number_of_retries){
+
+    function sleep(milliseconds) {
+      const date = Date.now();
+      let currentDate = null;
+      do {
+        currentDate = Date.now();
+      } while (currentDate - date < milliseconds);
+    }
+    
+    let current_retry_number = 0;
+    let response = this.runGatherer(test, gathererName, options);
+
+   while (current_retry_number < max_number_of_retries && response.status === Status.ERROR) {
+        current_retry_number = current_retry_number + 1;
+        let sleep_duration = 1000 * (2 ** current_retry_number);
+        console.log("Error. Retrying the test. Attempt nr: %d", current_retry_number);
+        sleep(sleep_duration);
+        response = this.runGatherer(test, gathererName, options);
+    }
+    return response;
   }
 
   /**
